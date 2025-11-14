@@ -65,7 +65,6 @@ def calculate_solar_output(latitude, longitude, system_power_kw=10.0):
     plt.tight_layout()
 
     # Генерація PDF
-    pdf_buffer = BytesIO()
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", size=12)
@@ -79,7 +78,8 @@ def calculate_solar_output(latitude, longitude, system_power_kw=10.0):
     for index, row in result_df.iterrows():
         pdf.cell(200, 8, txt=f"{row['Month']}: {round(row['Energy (kWh)'], 2)} kWh", ln=1)
 
-    pdf.output(pdf_buffer)
+    pdf_bytes = pdf.output(dest='S').encode('latin1')
+    pdf_buffer = BytesIO(pdf_bytes)
     pdf_buffer.seek(0)
 
     return {

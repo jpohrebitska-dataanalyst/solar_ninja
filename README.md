@@ -1,6 +1,5 @@
 # ⚡🥷 Solar Ninja — Smart Solar Advisor  
-Forecasting • Tilt Optimization • Green Tariff Analytics  
-
+Forecasting • Tilt Optimization • ROI Analytics  
 A lightweight analytical toolkit for Ukrainian residential solar owners and installers.
 
 ---

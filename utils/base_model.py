@@ -154,8 +154,8 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
     table_fig.savefig(tmp_table.name, dpi=150)
     plt.close(table_fig)
 
-    # ------------------------------------------------------------
-    # 9. PDF (perfectly aligned)
+        # ------------------------------------------------------------
+    # 9. PDF (ideal alignment)
     # ------------------------------------------------------------
     buffer = BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=letter)
@@ -178,43 +178,55 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
     y -= 18
     pdf.drawString(50, y, f"Annual energy: {annual_energy:.0f} kWh")
 
-    # TABLE (centered, fixed size)
+    # ------------------------------------------------------------
+    # Insert TABLE (centered and aligned)
+    # ------------------------------------------------------------
     pdf.setFont("Helvetica-Bold", 13)
-    pdf.drawString(50, y - 30, "Monthly Energy Table:")
+    y -= 40
+    pdf.drawString(50, y, "Monthly Energy Table:")
+    y -= 20
 
-    table_width = 380
-    table_height = 260
-    x_table = (width - table_width) / 2
-    y_table = height - 430
+    # Load PNG actual size
+    table_img = ImageReader(tmp_table.name)
+    table_w, table_h = table_img.getSize()
 
-    pdf.drawImage(
-        ImageReader(tmp_table.name),
-        x_table,
-        y_table,
-        width=table_width,
-        height=table_height,
-        preserveAspectRatio=False
-    )
+    # Scale factors
+    max_table_w = 400
+    scale_factor = max_table_w / table_w
 
-    # CHART (new page)
+    new_w = int(table_w * scale_factor)
+    new_h = int(table_h * scale_factor)
+
+    # Center table
+    x_pos = (width - new_w) / 2
+    y_pos = y - new_h
+
+    pdf.drawImage(table_img, x_pos, y_pos, width=new_w, height=new_h)
+
+    # Move Y down for safety
+    y = y_pos - 40
+
+    # ------------------------------------------------------------
+    # NEW PAGE + CHART (centered and aligned)
+    # ------------------------------------------------------------
     pdf.showPage()
-
     pdf.setFont("Helvetica-Bold", 13)
     pdf.drawString(50, height - 50, "Monthly Energy Chart:")
 
-    chart_width = 420
-    chart_height = 260
-    x_chart = (width - chart_width) / 2
-    y_chart = height - chart_height - 120
+    chart_img = ImageReader(tmp_plot.name)
+    chart_w, chart_h = chart_img.getSize()
 
-    pdf.drawImage(
-        ImageReader(tmp_plot.name),
-        x_chart,
-        y_chart,
-        width=chart_width,
-        height=chart_height,
-        preserveAspectRatio=False
-    )
+    # scale chart
+    max_chart_w = 420
+    scale_chart = max_chart_w / chart_w
+
+    new_cw = int(chart_w * scale_chart)
+    new_ch = int(chart_h * scale_chart)
+
+    x_chart = (width - new_cw) / 2
+    y_chart = height - new_ch - 100
+
+    pdf.drawImage(chart_img, x_chart, y_chart, width=new_cw, height=new_ch)
 
     pdf.save()
     buffer.seek(0)

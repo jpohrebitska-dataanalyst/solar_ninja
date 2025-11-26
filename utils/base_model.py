@@ -131,7 +131,7 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
 
     tmp_plot = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
     fig.savefig(tmp_plot.name, dpi=150)
-    plt.close(fig)
+    tmp_plot.close()
 
     # ------------------------------------------------------------
     # 8. PNG: Table (fixed size)
@@ -152,9 +152,9 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
 
     tmp_table = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
     table_fig.savefig(tmp_table.name, dpi=150)
-    plt.close(table_fig)
+    tmp_table.close()
 
-        # ------------------------------------------------------------
+    # ------------------------------------------------------------
     # 9. PDF (ideal alignment)
     # ------------------------------------------------------------
     buffer = BytesIO()
@@ -186,25 +186,32 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
     pdf.drawString(50, y, "Monthly Energy Table:")
     y -= 20
 
-    # Load PNG actual size
+    # Load PNG and fit to page
     table_img = ImageReader(tmp_table.name)
     table_w, table_h = table_img.getSize()
 
-    # Scale factors
-    max_table_w = 400
-    scale_factor = max_table_w / table_w
+    margin = 50
+    content_width = width - 2 * margin
+    available_height = y - margin
 
-    new_w = int(table_w * scale_factor)
-    new_h = int(table_h * scale_factor)
+    scale_factor = min(content_width / table_w, available_height / table_h, 1.0)
+    new_w = table_w * scale_factor
+    new_h = table_h * scale_factor
 
-    # Center table
-    x_pos = (width - new_w) / 2
+    x_pos = margin + (content_width - new_w) / 2
     y_pos = y - new_h
 
-    pdf.drawImage(table_img, x_pos, y_pos, width=new_w, height=new_h)
+    pdf.drawImage(
+        table_img,
+        x_pos,
+        y_pos,
+        width=new_w,
+        height=new_h,
+        preserveAspectRatio=True,
+        anchor="c",
+    )
 
-    # Move Y down for safety
-    y = y_pos - 40
+    y = y_pos - 30
 
     # ------------------------------------------------------------
     # NEW PAGE + CHART (centered and aligned)
@@ -216,17 +223,24 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
     chart_img = ImageReader(tmp_plot.name)
     chart_w, chart_h = chart_img.getSize()
 
-    # scale chart
-    max_chart_w = 420
-    scale_chart = max_chart_w / chart_w
+    chart_available_height = height - 2 * margin
+    scale_chart = min((content_width) / chart_w, chart_available_height / chart_h, 1.0)
 
-    new_cw = int(chart_w * scale_chart)
-    new_ch = int(chart_h * scale_chart)
+    new_cw = chart_w * scale_chart
+    new_ch = chart_h * scale_chart
 
-    x_chart = (width - new_cw) / 2
-    y_chart = height - new_ch - 100
+    x_chart = margin + (content_width - new_cw) / 2
+    y_chart = margin + (chart_available_height - new_ch)
 
-    pdf.drawImage(chart_img, x_chart, y_chart, width=new_cw, height=new_ch)
+    pdf.drawImage(
+        chart_img,
+        x_chart,
+        y_chart,
+        width=new_cw,
+        height=new_ch,
+        preserveAspectRatio=True,
+        anchor="c",
+    )
 
     pdf.save()
     buffer.seek(0)

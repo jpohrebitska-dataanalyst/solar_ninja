@@ -9,7 +9,7 @@ import os
 
 # ReportLab PDF
 from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import letter
+from reportlab.lib.pagesizes import letter, landscape
 from reportlab.lib.utils import ImageReader
 
 
@@ -158,33 +158,39 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
     # 9. PDF (ideal alignment)
     # ------------------------------------------------------------
     buffer = BytesIO()
-    pdf = canvas.Canvas(buffer, pagesize=letter)
-    width, height = letter
+    pdf = canvas.Canvas(buffer, pagesize=landscape(letter))
+    width, height = landscape(letter)
+
+    # Layout helpers
+    margin = 36
+    content_width = width - 2 * margin
+    y = height - margin
 
     # Header
-    y = height - 50
-    pdf.setFont("Helvetica-Bold", 16)
-    pdf.drawString(50, y, "Solar Ninja — Basic Model Report")
+    pdf.setFont("Helvetica-Bold", 18)
+    pdf.drawString(margin, y, "Solar Ninja — Basic Model Report")
 
-    pdf.setFont("Helvetica", 12)
-    y -= 30
-    pdf.drawString(50, y, f"Location: lat={latitude:.4f}, lon={longitude:.4f}")
-    y -= 18
-    pdf.drawString(50, y, f"System power: {system_power_kw:.2f} kW")
-    y -= 18
-    pdf.drawString(50, y, f"User tilt: {user_tilt:.1f}°")
-    y -= 18
-    pdf.drawString(50, y, f"Annual optimal tilt: {annual_optimal_tilt}°")
-    y -= 18
-    pdf.drawString(50, y, f"Annual energy: {annual_energy:.0f} kWh")
+    # Summary block
+    pdf.setFont("Helvetica", 11)
+    y -= 24
+    summary_lines = [
+        f"Location: lat={latitude:.4f}, lon={longitude:.4f}",
+        f"System power: {system_power_kw:.2f} kW",
+        f"User tilt: {user_tilt:.1f}°",
+        f"Annual optimal tilt: {annual_optimal_tilt}°",
+        f"Annual energy: {annual_energy:.0f} kWh",
+    ]
 
-    # ------------------------------------------------------------
-    # Insert TABLE (centered and aligned)
-    # ------------------------------------------------------------
+    for line in summary_lines:
+        pdf.drawString(margin, y, line)
+        y -= 16
+
+    # Titles for main content
+    y -= 6
     pdf.setFont("Helvetica-Bold", 13)
-    y -= 40
-    pdf.drawString(50, y, "Monthly Energy Table:")
-    y -= 20
+    pdf.drawString(margin, y, "Monthly Energy Table")
+    pdf.drawString(margin + content_width / 2, y, "Monthly Energy Chart")
+    y -= 14
 
     # Load PNG and fit to page
     table_img = ImageReader(tmp_table.name)

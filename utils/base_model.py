@@ -235,5 +235,6 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
         "monthly_best": monthly_best.reset_index(drop=True),
         "annual_energy": annual_energy_user,
         "annual_optimal_tilt": annual_optimal_tilt,
-        "pdf": buffer
+        "fig": fig,
+        "pdf": buffer,
     }

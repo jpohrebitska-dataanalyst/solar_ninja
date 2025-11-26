@@ -7,7 +7,7 @@ from io import BytesIO
 import tempfile
 import os
 
-# ReportLab (PDF)
+# ReportLab PDF
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.utils import ImageReader
@@ -18,7 +18,9 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
     Solar Ninja — Basic Model
     """
 
-    # 1. Час
+    # ------------------------------------------------------------
+    # 1. Time index
+    # ------------------------------------------------------------
     timezone = "UTC"
     times = pd.date_range(
         "2025-01-01", "2025-12-31 23:00",
@@ -26,16 +28,22 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
         tz=timezone
     )
 
-    # 2. Локація
+    # ------------------------------------------------------------
+    # 2. Location & sun positions
+    # ------------------------------------------------------------
     location = Location(latitude=latitude, longitude=longitude, tz=timezone)
     solar_position = location.get_solarposition(times)
 
-    # 3. Clearsky
+    # ------------------------------------------------------------
+    # 3. Clearsky GHI
+    # ------------------------------------------------------------
     clearsky = location.get_clearsky(times, model="ineichen")
     ghi = clearsky["ghi"].clip(lower=0)
     ghi_kw = ghi / 1000.0
 
+    # ------------------------------------------------------------
     # 4. Monthly optimal tilt
+    # ------------------------------------------------------------
     tilts = list(range(0, 91))
     monthly_cos = {}
 
@@ -46,8 +54,10 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
             solar_zenith=solar_position["apparent_zenith"],
             solar_azimuth=solar_position["azimuth"]
         )
+
         cos_aoi = np.cos(np.radians(aoi))
         cos_aoi[cos_aoi < 0] = 0
+
         monthly_cos[f"tilt_{t}"] = cos_aoi
 
     df_cos = pd.DataFrame(monthly_cos, index=times)
@@ -57,10 +67,12 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
     monthly_best.columns = ["Best Tilt (deg)"]
     monthly_best["Month"] = monthly_best.index.strftime("%B")
 
+    # ------------------------------------------------------------
     # 5. Annual optimal tilt
+    # ------------------------------------------------------------
     system_losses = 0.20
     best_tilt = None
-    best_energy = -1
+    best_energy = -1.0
 
     for t in tilts:
         aoi = irradiance.aoi(
@@ -69,6 +81,7 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
             solar_zenith=solar_position["apparent_zenith"],
             solar_azimuth=solar_position["azimuth"]
         )
+
         cos_aoi = np.cos(np.radians(aoi))
         cos_aoi[cos_aoi < 0] = 0
 
@@ -81,7 +94,9 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
 
     annual_optimal_tilt = best_tilt
 
+    # ------------------------------------------------------------
     # 6. User tilt energy
+    # ------------------------------------------------------------
     aoi_user = irradiance.aoi(
         surface_tilt=user_tilt,
         surface_azimuth=180,
@@ -94,6 +109,7 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
 
     poa_user = ghi_kw * cos_user * (1 - system_losses)
     hourly = poa_user * system_power_kw
+
     monthly_energy = hourly.resample("M").sum()
     annual_energy = float(hourly.sum())
 
@@ -102,10 +118,10 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
         "Energy (kWh)": monthly_energy.values
     })
 
-    # ---------------------------
-    # 7. Plot PNG
-    # ---------------------------
-    fig, ax = plt.subplots(figsize=(10, 5))
+    # ------------------------------------------------------------
+    # 7. PNG: Monthly Chart (fixed size)
+    # ------------------------------------------------------------
+    fig, ax = plt.subplots(figsize=(8, 4), dpi=150)
     ax.bar(monthly_df["Month"], monthly_df["Energy (kWh)"], color="orange")
     ax.set_title(f"Monthly Energy Output (Tilt = {user_tilt:.1f}°)")
     ax.set_xlabel("Month")
@@ -114,12 +130,13 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
     plt.tight_layout()
 
     tmp_plot = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
-    fig.savefig(tmp_plot.name, dpi=150, bbox_inches="tight")
+    fig.savefig(tmp_plot.name, dpi=150)
+    plt.close(fig)
 
-    # ---------------------------
-    # 8. Table PNG
-    # ---------------------------
-    table_fig, table_ax = plt.subplots(figsize=(8, 4))
+    # ------------------------------------------------------------
+    # 8. PNG: Table (fixed size)
+    # ------------------------------------------------------------
+    table_fig, table_ax = plt.subplots(figsize=(6, 3), dpi=150)
     table_ax.axis("off")
 
     table = table_ax.table(
@@ -130,19 +147,21 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
         cellLoc="center"
     )
     table.auto_set_font_size(False)
-    table.set_fontsize(10)
-    table.scale(1.3, 1.4)
+    table.set_fontsize(9)
+    table.scale(1.3, 1.3)
 
     tmp_table = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
-    table_fig.savefig(tmp_table.name, dpi=150, bbox_inches="tight")
+    table_fig.savefig(tmp_table.name, dpi=150)
+    plt.close(table_fig)
 
-    # ---------------------------
-    # 9. PDF — вирівняно!
-    # ---------------------------
+    # ------------------------------------------------------------
+    # 9. PDF (perfectly aligned)
+    # ------------------------------------------------------------
     buffer = BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=letter)
     width, height = letter
 
+    # Header
     y = height - 50
     pdf.setFont("Helvetica-Bold", 16)
     pdf.drawString(50, y, "Solar Ninja — Basic Model Report")
@@ -159,27 +178,43 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
     y -= 18
     pdf.drawString(50, y, f"Annual energy: {annual_energy:.0f} kWh")
 
-    # 🟨 TABLE — вирівняно по центру сторінки
-    table_width = 400
-    table_height = 200
-    x_table = (width - table_width) / 2
-    y_table = y - table_height - 30
-
+    # TABLE (centered, fixed size)
     pdf.setFont("Helvetica-Bold", 13)
-    pdf.drawString(50, y - 20, "Monthly Energy Table:")
-    pdf.drawImage(ImageReader(tmp_table.name), x_table, y_table, width=table_width)
+    pdf.drawString(50, y - 30, "Monthly Energy Table:")
 
-    # 🟧 CHART — окрема сторінка, теж центрований
+    table_width = 380
+    table_height = 260
+    x_table = (width - table_width) / 2
+    y_table = height - 430
+
+    pdf.drawImage(
+        ImageReader(tmp_table.name),
+        x_table,
+        y_table,
+        width=table_width,
+        height=table_height,
+        preserveAspectRatio=False
+    )
+
+    # CHART (new page)
     pdf.showPage()
+
     pdf.setFont("Helvetica-Bold", 13)
     pdf.drawString(50, height - 50, "Monthly Energy Chart:")
 
-    chart_width = 500
-    chart_height = 350
+    chart_width = 420
+    chart_height = 260
     x_chart = (width - chart_width) / 2
-    y_chart = height - chart_height - 100
+    y_chart = height - chart_height - 120
 
-    pdf.drawImage(ImageReader(tmp_plot.name), x_chart, y_chart, width=chart_width)
+    pdf.drawImage(
+        ImageReader(tmp_plot.name),
+        x_chart,
+        y_chart,
+        width=chart_width,
+        height=chart_height,
+        preserveAspectRatio=False
+    )
 
     pdf.save()
     buffer.seek(0)
@@ -188,11 +223,14 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
     os.unlink(tmp_plot.name)
     os.unlink(tmp_table.name)
 
+    # ------------------------------------------------------------
+    # Return
+    # ------------------------------------------------------------
     return {
         "monthly_df": monthly_df,
         "monthly_best": monthly_best.reset_index(drop=True),
         "annual_energy": annual_energy,
         "annual_optimal_tilt": annual_optimal_tilt,
-        "fig": fig,               # нове! → для Streamlit
+        "fig": fig,
         "pdf": buffer
     }

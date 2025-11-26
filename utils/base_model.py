@@ -9,7 +9,7 @@ import os
 
 # ReportLab PDF
 from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import letter
+from reportlab.lib.pagesizes import letter, landscape
 from reportlab.lib.utils import ImageReader
 
 
@@ -132,6 +132,7 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
     tmp_plot = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
     fig.savefig(tmp_plot.name, dpi=150)
     plt.close(fig)
+    tmp_plot.close()
 
     # ------------------------------------------------------------
     # 8. PNG: Table (fixed size)
@@ -153,80 +154,89 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
     tmp_table = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
     table_fig.savefig(tmp_table.name, dpi=150)
     plt.close(table_fig)
+    tmp_table.close()
 
-        # ------------------------------------------------------------
-    # 9. PDF (ideal alignment)
+    # ------------------------------------------------------------
+    # 9. PDF (single-page summary layout)
     # ------------------------------------------------------------
     buffer = BytesIO()
-    pdf = canvas.Canvas(buffer, pagesize=letter)
-    width, height = letter
+    pdf = canvas.Canvas(buffer, pagesize=landscape(letter))
+    width, height = landscape(letter)
+
+    # Layout helpers
+    margin = 36
+    content_width = width - 2 * margin
+    y = height - margin
 
     # Header
-    y = height - 50
-    pdf.setFont("Helvetica-Bold", 16)
-    pdf.drawString(50, y, "Solar Ninja — Basic Model Report")
+    pdf.setFont("Helvetica-Bold", 18)
+    pdf.drawString(margin, y, "Solar Ninja — Basic Model Report")
 
-    pdf.setFont("Helvetica", 12)
-    y -= 30
-    pdf.drawString(50, y, f"Location: lat={latitude:.4f}, lon={longitude:.4f}")
-    y -= 18
-    pdf.drawString(50, y, f"System power: {system_power_kw:.2f} kW")
-    y -= 18
-    pdf.drawString(50, y, f"User tilt: {user_tilt:.1f}°")
-    y -= 18
-    pdf.drawString(50, y, f"Annual optimal tilt: {annual_optimal_tilt}°")
-    y -= 18
-    pdf.drawString(50, y, f"Annual energy: {annual_energy:.0f} kWh")
+    # Summary block
+    pdf.setFont("Helvetica", 11)
+    y -= 24
+    summary_lines = [
+        f"Location: lat={latitude:.4f}, lon={longitude:.4f}",
+        f"System power: {system_power_kw:.2f} kW",
+        f"User tilt: {user_tilt:.1f}°",
+        f"Annual optimal tilt: {annual_optimal_tilt}°",
+        f"Annual energy: {annual_energy:.0f} kWh",
+    ]
 
-    # ------------------------------------------------------------
-    # Insert TABLE (centered and aligned)
-    # ------------------------------------------------------------
+    for line in summary_lines:
+        pdf.drawString(margin, y, line)
+        y -= 16
+
+    # Titles for main content
+    y -= 6
     pdf.setFont("Helvetica-Bold", 13)
-    y -= 40
-    pdf.drawString(50, y, "Monthly Energy Table:")
-    y -= 20
+    pdf.drawString(margin, y, "Monthly Energy Table")
+    pdf.drawString(margin + content_width / 2, y, "Monthly Energy Chart")
+    y -= 14
 
-    # Load PNG actual size
+    # Column layout sizes
+    col_width = content_width / 2 - 10
+    available_height = y - margin
+
+    # Load assets
     table_img = ImageReader(tmp_table.name)
     table_w, table_h = table_img.getSize()
-
-    # Scale factors
-    max_table_w = 400
-    scale_factor = max_table_w / table_w
-
-    new_w = int(table_w * scale_factor)
-    new_h = int(table_h * scale_factor)
-
-    # Center table
-    x_pos = (width - new_w) / 2
-    y_pos = y - new_h
-
-    pdf.drawImage(table_img, x_pos, y_pos, width=new_w, height=new_h)
-
-    # Move Y down for safety
-    y = y_pos - 40
-
-    # ------------------------------------------------------------
-    # NEW PAGE + CHART (centered and aligned)
-    # ------------------------------------------------------------
-    pdf.showPage()
-    pdf.setFont("Helvetica-Bold", 13)
-    pdf.drawString(50, height - 50, "Monthly Energy Chart:")
-
     chart_img = ImageReader(tmp_plot.name)
     chart_w, chart_h = chart_img.getSize()
 
-    # scale chart
-    max_chart_w = 420
-    scale_chart = max_chart_w / chart_w
+    # Scale to fit columns while preserving aspect ratio
+    table_scale = min(col_width / table_w, available_height / table_h, 1.0)
+    chart_scale = min(col_width / chart_w, available_height / chart_h, 1.0)
 
-    new_cw = int(chart_w * scale_chart)
-    new_ch = int(chart_h * scale_chart)
+    new_tw = table_w * table_scale
+    new_th = table_h * table_scale
+    new_cw = chart_w * chart_scale
+    new_ch = chart_h * chart_scale
 
-    x_chart = (width - new_cw) / 2
-    y_chart = height - new_ch - 100
+    # Vertical centering within available height
+    table_y = margin + (available_height - new_th) / 2
+    chart_y = margin + (available_height - new_ch) / 2
 
-    pdf.drawImage(chart_img, x_chart, y_chart, width=new_cw, height=new_ch)
+    # Draw images side by side
+    pdf.drawImage(
+        table_img,
+        margin,
+        table_y,
+        width=new_tw,
+        height=new_th,
+        preserveAspectRatio=True,
+        anchor="sw",
+    )
+
+    pdf.drawImage(
+        chart_img,
+        margin + col_width + 20,
+        chart_y,
+        width=new_cw,
+        height=new_ch,
+        preserveAspectRatio=True,
+        anchor="sw",
+    )
 
     pdf.save()
     buffer.seek(0)

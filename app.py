@@ -1,208 +1,239 @@
-import streamlit as st
-from utils.base_model import calculate_solar_output
+import pandas as pd
+import numpy as np
+from pvlib.location import Location
+from pvlib import irradiance
+import matplotlib.pyplot as plt
+from io import BytesIO
+import tempfile
+import os
+
+# ReportLab (PDF)
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.utils import ImageReader
 
 
-# ------------------------------------------------------
-# Page config
-# ------------------------------------------------------
-st.set_page_config(
-    page_title="Solar Ninja — Basic Model",
-    page_icon="⚔️",
-    layout="centered"
-)
+def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
+    """
+    Solar Ninja — Basic Model
+    PDF через ReportLab (стиль B2, макет P2)
 
-st.title("⚔️ Solar Ninja — Basic Model")
-st.write(
-    "Enter your system parameters below to estimate solar energy generation "
-    "for any location in the world."
-)
+    Основна логіка:
+    - Clearsky GHI через Ineichen
+    - AOI модель (cos(AOI) з обрізанням ночі)
+    - Річний оптимальний кут нахилу (max annual kWh)
+    - Генерація при user tilt
+    - PNG: графік + PNG таблиця
+    - PDF: текст → таблиця → графік
+    """
 
-# ------------------------------------------------------
-# Input form
-# ------------------------------------------------------
-with st.form("input_form"):
-    st.subheader("Input parameters")
+    # ------------------------------------------------------------
+    # 1. Часовий індекс
+    # ------------------------------------------------------------
+    timezone = "UTC"
+    times = pd.date_range(
+        "2025-01-01", "2025-12-31 23:00",
+        freq="1h",
+        tz=timezone
+    )
 
-    col1, col2 = st.columns(2)
-    latitude = col1.number_input("Latitude (deg)", value=50.45, format="%.4f")
-    longitude = col2.number_input("Longitude (deg)", value=30.52, format="%.4f")
+    # ------------------------------------------------------------
+    # 2. Локація + сонячне положення
+    # ------------------------------------------------------------
+    location = Location(latitude=latitude, longitude=longitude, tz=timezone)
+    solar_position = location.get_solarposition(times)
 
-    col3, col4 = st.columns(2)
-    system_power_kw = col3.number_input("System power (kW)", value=10.0)
-    user_tilt = col4.number_input("Panel tilt (deg)", value=45.0)
+    # ------------------------------------------------------------
+    # 3. Clearsky GHI через Ineichen
+    # ------------------------------------------------------------
+    clearsky = location.get_clearsky(times, model="ineichen")
+    ghi = clearsky["ghi"].copy()
+    ghi[ghi < 0] = 0
+    ghi_kw = ghi / 1000.0
 
-    submitted = st.form_submit_button("Calculate")
+    # ------------------------------------------------------------
+    # 4. Monthly optimal tilts (аналітичні)
+    # ------------------------------------------------------------
+    tilts = list(range(0, 91))
+    monthly_cos_dict = {}
 
-
-# ------------------------------------------------------
-# Run calculation and show results
-# ------------------------------------------------------
-if submitted:
-    with st.spinner("Running Solar Ninja Basic Model..."):
-        result = calculate_solar_output(
-            latitude=latitude,
-            longitude=longitude,
-            system_power_kw=system_power_kw,
-            user_tilt=user_tilt
+    for tilt in tilts:
+        aoi = irradiance.aoi(
+            surface_tilt=tilt,
+            surface_azimuth=180,
+            solar_zenith=solar_position["apparent_zenith"],
+            solar_azimuth=solar_position["azimuth"]
         )
 
-    monthly_df = result["monthly_df"]
-    monthly_best = result["monthly_best"]
-    annual_energy = result["annual_energy"]
-    annual_optimal_tilt = result["annual_optimal_tilt"]
-    pdf_buffer = result["pdf"]
+        cos_aoi = np.cos(np.radians(aoi))
+        cos_aoi[cos_aoi < 0] = 0
+        monthly_cos_dict[f"tilt_{tilt}"] = cos_aoi
 
-    st.success("Calculation completed.")
+    df_cos = pd.DataFrame(monthly_cos_dict, index=times)
+    monthly_avg = df_cos.resample("M").mean()
 
-    # Annual energy and optimal tilt
-    st.subheader("Annual summary")
-    col_a, col_b = st.columns(2)
-    col_a.metric(
-        label="Annual energy (user tilt)",
-        value=f"{annual_energy:,.0f} kWh"
-    )
-    col_b.metric(
-        label="Annual optimal tilt",
-        value=f"{annual_optimal_tilt}°"
-    )
+    monthly_best = monthly_avg.idxmax(axis=1).str.extract(r"(\d+)").astype(int)
+    monthly_best.columns = ["Best Tilt (deg)"]
+    monthly_best["Month"] = monthly_best.index.strftime("%B")
 
-    # Monthly energy
-    st.subheader("Monthly energy (user tilt)")
-    st.dataframe(monthly_df)
+    # ------------------------------------------------------------
+    # 5. Annual optimal tilt (максимальна річна генерація)
+    # ------------------------------------------------------------
+    system_losses = 0.20
 
-    # Monthly optimal tilt analytics
-    st.subheader("Monthly optimal tilts (analytics)")
-    st.dataframe(monthly_best)
+    best_annual_tilt = None
+    best_annual_energy = -1.0
 
-    # PDF download
-    st.subheader("Download PDF report")
-    st.download_button(
-        label="Download PDF",
-        data=pdf_buffer,
-        file_name="solar_ninja_basic_report.pdf",
-        mime="application/pdf"
-    )
+    for tilt in tilts:
+        aoi = irradiance.aoi(
+            surface_tilt=tilt,
+            surface_azimuth=180,
+            solar_zenith=solar_position["apparent_zenith"],
+            solar_azimuth=solar_position["azimuth"]
+        )
 
-# ------------------------------------------------------
-# Footer description
-# ------------------------------------------------------
-st.markdown("---")
-st.markdown(
-    """
-    ### About this app  
-    **Solar Ninja — Basic Model** is an analytical tool for planning optimal solar panel parameters  
-    for any location in the world.
-    """
-)
-import streamlit as st
-import pandas as pd
+        cos_aoi = np.cos(np.radians(aoi))
+        cos_aoi[cos_aoi < 0] = 0
 
-from utils.base_model import calculate_solar_output
+        poa = ghi_kw * cos_aoi
+        poa *= (1.0 - system_losses)
 
+        hourly_energy = poa * system_power_kw
+        annual_energy = float(hourly_energy.sum())
 
-# ------------------------------------------------------
-# 🟧 Налаштування сторінки
-# ------------------------------------------------------
-st.set_page_config(
-    page_title="Solar Ninja — Basic Model",
-    page_icon="⚔️",
-    layout="centered"
-)
+        if annual_energy > best_annual_energy:
+            best_annual_energy = annual_energy
+            best_annual_tilt = tilt
 
-st.title("⚔️ Solar Ninja — Basic Model")
-st.write("Введіть параметри нижче, щоб отримати прогноз генерації вашої сонячної системи.")
+    annual_optimal_tilt = best_annual_tilt
 
-
-# ------------------------------------------------------
-# 🟧 Форма вводу
-# ------------------------------------------------------
-with st.form("input_form"):
-    st.subheader("Вхідні дані")
-
-    col1, col2 = st.columns(2)
-    latitude = col1.number_input("Широта (lat)", value=50.45, format="%.4f")
-    longitude = col2.number_input("Довгота (lon)", value=30.52, format="%.4f")
-
-    col3, col4 = st.columns(2)
-    system_power_kw = col3.number_input("Потужність системи (кВт)", value=10.0)
-    user_tilt = col4.number_input("Кут нахилу панелей (°)", value=45.0)
-
-    submit_button = st.form_submit_button("Розрахувати")
-
-
-# ------------------------------------------------------
-# 🟧 Обробка результатів
-# ------------------------------------------------------
-if submit_button:
-
-    st.success("Розрахунок виконано!")
-
-    result = calculate_solar_output(
-        latitude=latitude,
-        longitude=longitude,
-        system_power_kw=system_power_kw,
-        user_tilt=user_tilt
+    # ------------------------------------------------------------
+    # 6. Генерація при user tilt
+    # ------------------------------------------------------------
+    aoi_user = irradiance.aoi(
+        surface_tilt=user_tilt,
+        surface_azimuth=180,
+        solar_zenith=solar_position["apparent_zenith"],
+        solar_azimuth=solar_position["azimuth"]
     )
 
-    avg_tilt = result["avg_tilt"]
-    annual_energy = result["annual_energy"]
-    monthly_df = result["monthly_df"]
-    fig = result["fig"]
-    monthly_best = result["monthly_best"]
-    pdf_buffer = result["pdf"]
+    cos_aoi_user = np.cos(np.radians(aoi_user))
+    cos_aoi_user[cos_aoi_user < 0] = 0
 
-    # -------------------------------
-    # 🔋 Річна генерація
-    # -------------------------------
-    st.subheader("🔋 Річна генерація")
-    st.metric(
-        label="Річний прогноз генерації",
-        value=f"{annual_energy:,.0f} кВт·год"
+    poa_user = ghi_kw * cos_aoi_user
+    poa_user *= (1.0 - system_losses)
+
+    hourly_energy_user = poa_user * system_power_kw
+    monthly_energy = hourly_energy_user.resample("M").sum()
+    annual_energy_user = float(hourly_energy_user.sum())
+
+    monthly_df = pd.DataFrame({
+        "Month": monthly_energy.index.strftime("%B"),
+        "Energy (kWh)": monthly_energy.values
+    })
+
+    # ------------------------------------------------------------
+    # 7. Створення графіку PNG
+    # ------------------------------------------------------------
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.bar(monthly_df["Month"], monthly_df["Energy (kWh)"], color="orange")
+    ax.set_title(f"Monthly Energy Output (Tilt = {user_tilt:.1f}°)")
+    ax.set_xlabel("Month")
+    ax.set_ylabel("Energy (kWh)")
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+
+    tmp_plot = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+    fig.savefig(tmp_plot.name, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+    # ------------------------------------------------------------
+    # 8. Таблиця PNG (Tableau style)
+    # ------------------------------------------------------------
+    table_fig, table_ax = plt.subplots(figsize=(8, 4))
+    table_ax.axis("off")
+
+    table = table_ax.table(
+        cellText=monthly_df["Energy (kWh)"].round(2).values.reshape(-1, 1),
+        rowLabels=monthly_df["Month"].values,
+        colLabels=["Energy (kWh)"],
+        cellLoc="center",
+        loc="center"
     )
 
-    # -------------------------------
-    # 📅 Помісячна генерація
-    # -------------------------------
-    st.subheader("📅 Помісячне виробництво")
-    st.dataframe(monthly_df)
+    table.auto_set_font_size(False)
+    table.set_fontsize(10)
+    table.scale(1.3, 1.4)
 
-    # Графік
-    st.subheader("📈 Графік генерації")
-    st.pyplot(fig)
+    # Style header
+    for (row, col), cell in table.get_celld().items():
+        if row == 0:
+            cell.set_facecolor("#E5E5E5")
+            cell.set_text_props(weight="bold")
+        else:
+            cell.set_facecolor("#FFFFFF")
 
-    # -------------------------------
-    # 📐 Оптимальні кути
-    # -------------------------------
-    st.subheader("📐 Оптимальний кут нахилу (аналітика)")
+    tmp_table = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+    table_fig.savefig(tmp_table.name, dpi=150, bbox_inches="tight")
+    plt.close(table_fig)
 
-    st.write(
-        f"**Середній оптимальний кут нахилу:** {avg_tilt:.2f}°"
-    )
+    # ------------------------------------------------------------
+    # 9. Формування PDF через ReportLab
+    # ------------------------------------------------------------
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=letter)
+    width, height = letter
 
-    st.dataframe(monthly_best.reset_index(drop=True))
+    y = height - 50
+    pdf.setFont("Helvetica-Bold", 16)
+    pdf.drawString(50, y, "Solar Ninja — Basic Model Report")
 
-    # -------------------------------
-    # 📄 Завантаження PDF
-    # -------------------------------
-    st.subheader("📄 Завантажити PDF-звіт")
+    pdf.setFont("Helvetica", 12)
+    y -= 30
+    pdf.drawString(50, y, f"Location: lat={latitude:.4f}, lon={longitude:.4f}")
+    y -= 18
+    pdf.drawString(50, y, f"System power: {system_power_kw:.2f} kW")
+    y -= 18
+    pdf.drawString(50, y, f"User tilt: {user_tilt:.1f} deg")
+    y -= 18
+    pdf.drawString(50, y, f"Annual optimal tilt: {annual_optimal_tilt} deg")
+    y -= 18
+    pdf.drawString(50, y, f"Annual energy (user tilt): {annual_energy_user:.0f} kWh")
 
-    st.download_button(
-        label="Завантажити PDF",
-        data=pdf_buffer,
-        file_name="solar_ninja_basic_report.pdf",
-        mime="application/pdf"
-    )
+    # ------------------------------------------------------------
+    # Insert table
+    # ------------------------------------------------------------
+    y -= 40
+    pdf.setFont("Helvetica-Bold", 13)
+    pdf.drawString(50, y, "Monthly Energy Table:")
+    y -= 20
 
+    pdf.drawImage(ImageReader(tmp_table.name), 50, y - 200, width=400, preserveAspectRatio=True)
+    y = y - 220
 
-# ------------------------------------------------------
-# 🟧 Нижній опис програми
-# ------------------------------------------------------
-st.markdown("---")
-st.markdown(
-    """
-    ### 🌍 Про програму  
-    **Solar Ninja — Basic Model**  
-    Аналітичний інструмент для планування оптимальних параметрів встановлення сонячних панелей  
-    в будь-якій точці світу.  
-    """
-)
+    # ------------------------------------------------------------
+    # New page for plot
+    # ------------------------------------------------------------
+    pdf.showPage()
+    pdf.setFont("Helvetica-Bold", 13)
+    pdf.drawString(50, height - 50, "Monthly Energy Chart:")
+
+    pdf.drawImage(ImageReader(tmp_plot.name), 50, height - 450, width=500, preserveAspectRatio=True)
+
+    pdf.save()
+    buffer.seek(0)
+
+    # Remove temp files
+    os.unlink(tmp_plot.name)
+    os.unlink(tmp_table.name)
+
+    # ------------------------------------------------------------
+    # Return results
+    # ------------------------------------------------------------
+    return {
+        "monthly_df": monthly_df,
+        "monthly_best": monthly_best.reset_index(drop=True),
+        "annual_energy": annual_energy_user,
+        "annual_optimal_tilt": annual_optimal_tilt,
+        "pdf": buffer
+    }

@@ -1,42 +1,112 @@
 import streamlit as st
+import pandas as pd
+
 from utils.base_model import calculate_solar_output
-import matplotlib.pyplot as plt
-import base64
 
-st.set_page_config(page_title="Solar Advisor", layout="centered")
-st.title("☀️ Solar Advisor — Базовий розрахунок")
 
-st.markdown("""
-Введіть координати вашої локації та потужність вашої СЕС для оцінки річного виробництва електроенергії.
-""")
+# ------------------------------------------------------
+# 🟧 Налаштування сторінки
+# ------------------------------------------------------
+st.set_page_config(
+    page_title="Solar Ninja — Basic Model",
+    page_icon="⚔️",
+    layout="centered"
+)
 
+st.title("⚔️ Solar Ninja — Basic Model")
+st.write("Введіть параметри нижче, щоб отримати прогноз генерації вашої сонячної системи.")
+
+
+# ------------------------------------------------------
+# 🟧 Форма вводу
+# ------------------------------------------------------
 with st.form("input_form"):
+    st.subheader("Вхідні дані")
+
     col1, col2 = st.columns(2)
-    with col1:
-        latitude = st.number_input("Широта (Latitude)", value=50.45, format="%.4f")
-    with col2:
-        longitude = st.number_input("Довгота (Longitude)", value=30.52, format="%.4f")
-    
-    system_power_kw = st.number_input("Потужність системи (кВт)", value=10.0, min_value=0.5, step=0.5)
+    latitude = col1.number_input("Широта (lat)", value=50.45, format="%.4f")
+    longitude = col2.number_input("Довгота (lon)", value=30.52, format="%.4f")
 
-    submitted = st.form_submit_button("Розрахувати")
+    col3, col4 = st.columns(2)
+    system_power_kw = col3.number_input("Потужність системи (кВт)", value=10.0)
+    user_tilt = col4.number_input("Кут нахилу панелей (°)", value=45.0)
 
-if submitted:
-    with st.spinner("Обробка даних..."):
-        result = calculate_solar_output(latitude, longitude, system_power_kw)
+    submit_button = st.form_submit_button("Розрахувати")
 
-        st.success("✅ Розрахунок завершено!")
-        st.markdown(f"**Середній оптимальний кут нахилу:** `{result['avg_tilt']}°`")
-        st.markdown(f"**Річна генерація:** `{result['annual_energy']} кВт·год`")
 
-        st.markdown("### 📊 Графік генерації по місяцях")
-        st.pyplot(result['fig'])
+# ------------------------------------------------------
+# 🟧 Обробка результатів
+# ------------------------------------------------------
+if submit_button:
 
-        st.markdown("### 📋 Таблиця")
-        st.dataframe(result['monthly_df'])
+    st.success("Розрахунок виконано!")
 
-        st.markdown("### 📄 Завантажити PDF-звіт")
-        pdf = result['pdf'].getvalue()
-        b64_pdf = base64.b64encode(pdf).decode('utf-8')
-        href = f'<a href="data:application/octet-stream;base64,{b64_pdf}" download="solar_report.pdf">📥 Завантажити звіт (PDF)</a>'
-        st.markdown(href, unsafe_allow_html=True)
+    result = calculate_solar_output(
+        latitude=latitude,
+        longitude=longitude,
+        system_power_kw=system_power_kw,
+        user_tilt=user_tilt
+    )
+
+    avg_tilt = result["avg_tilt"]
+    annual_energy = result["annual_energy"]
+    monthly_df = result["monthly_df"]
+    fig = result["fig"]
+    monthly_best = result["monthly_best"]
+    pdf_buffer = result["pdf"]
+
+    # -------------------------------
+    # 🔋 Річна генерація
+    # -------------------------------
+    st.subheader("🔋 Річна генерація")
+    st.metric(
+        label="Річний прогноз генерації",
+        value=f"{annual_energy:,.0f} кВт·год"
+    )
+
+    # -------------------------------
+    # 📅 Помісячна генерація
+    # -------------------------------
+    st.subheader("📅 Помісячне виробництво")
+    st.dataframe(monthly_df)
+
+    # Графік
+    st.subheader("📈 Графік генерації")
+    st.pyplot(fig)
+
+    # -------------------------------
+    # 📐 Оптимальні кути
+    # -------------------------------
+    st.subheader("📐 Оптимальний кут нахилу (аналітика)")
+
+    st.write(
+        f"**Середній оптимальний кут нахилу:** {avg_tilt:.2f}°"
+    )
+
+    st.dataframe(monthly_best.reset_index(drop=True))
+
+    # -------------------------------
+    # 📄 Завантаження PDF
+    # -------------------------------
+    st.subheader("📄 Завантажити PDF-звіт")
+
+    st.download_button(
+        label="Завантажити PDF",
+        data=pdf_buffer,
+        file_name="solar_ninja_basic_report.pdf",
+        mime="application/pdf"
+    )
+
+
+# ------------------------------------------------------
+# 🟧 Нижній опис програми
+# ------------------------------------------------------
+st.markdown("---")
+st.markdown(
+    """
+    ### 🌍 Про програму  
+    **Solar Ninja — Basic Model**  
+    аналітичний інструмент для планування оптимальних параметрів встановлення сонячних панелей  
+    в будь-якій точці світу.  
+    """
+)

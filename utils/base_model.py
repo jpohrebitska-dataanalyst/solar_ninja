@@ -131,7 +131,6 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
 
     tmp_plot = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
     fig.savefig(tmp_plot.name, dpi=150)
-    plt.close(fig)
     tmp_plot.close()
 
     # ------------------------------------------------------------
@@ -153,11 +152,10 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
 
     tmp_table = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
     table_fig.savefig(tmp_table.name, dpi=150)
-    plt.close(table_fig)
     tmp_table.close()
 
     # ------------------------------------------------------------
-    # 9. PDF (single-page summary layout)
+    # 9. PDF (ideal alignment)
     # ------------------------------------------------------------
     buffer = BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=landscape(letter))
@@ -194,48 +192,60 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
     pdf.drawString(margin + content_width / 2, y, "Monthly Energy Chart")
     y -= 14
 
-    # Column layout sizes
-    col_width = content_width / 2 - 10
-    available_height = y - margin
-
-    # Load assets
+    # Load PNG and fit to page
     table_img = ImageReader(tmp_table.name)
     table_w, table_h = table_img.getSize()
+
+    margin = 50
+    content_width = width - 2 * margin
+    available_height = y - margin
+
+    scale_factor = min(content_width / table_w, available_height / table_h, 1.0)
+    new_w = table_w * scale_factor
+    new_h = table_h * scale_factor
+
+    x_pos = margin + (content_width - new_w) / 2
+    y_pos = y - new_h
+
+    pdf.drawImage(
+        table_img,
+        x_pos,
+        y_pos,
+        width=new_w,
+        height=new_h,
+        preserveAspectRatio=True,
+        anchor="c",
+    )
+
+    y = y_pos - 30
+
+    # ------------------------------------------------------------
+    # NEW PAGE + CHART (centered and aligned)
+    # ------------------------------------------------------------
+    pdf.showPage()
+    pdf.setFont("Helvetica-Bold", 13)
+    pdf.drawString(50, height - 50, "Monthly Energy Chart:")
+
     chart_img = ImageReader(tmp_plot.name)
     chart_w, chart_h = chart_img.getSize()
 
-    # Scale to fit columns while preserving aspect ratio
-    table_scale = min(col_width / table_w, available_height / table_h, 1.0)
-    chart_scale = min(col_width / chart_w, available_height / chart_h, 1.0)
+    chart_available_height = height - 2 * margin
+    scale_chart = min((content_width) / chart_w, chart_available_height / chart_h, 1.0)
 
-    new_tw = table_w * table_scale
-    new_th = table_h * table_scale
-    new_cw = chart_w * chart_scale
-    new_ch = chart_h * chart_scale
+    new_cw = chart_w * scale_chart
+    new_ch = chart_h * scale_chart
 
-    # Vertical centering within available height
-    table_y = margin + (available_height - new_th) / 2
-    chart_y = margin + (available_height - new_ch) / 2
-
-    # Draw images side by side
-    pdf.drawImage(
-        table_img,
-        margin,
-        table_y,
-        width=new_tw,
-        height=new_th,
-        preserveAspectRatio=True,
-        anchor="sw",
-    )
+    x_chart = margin + (content_width - new_cw) / 2
+    y_chart = margin + (chart_available_height - new_ch)
 
     pdf.drawImage(
         chart_img,
-        margin + col_width + 20,
-        chart_y,
+        x_chart,
+        y_chart,
         width=new_cw,
         height=new_ch,
         preserveAspectRatio=True,
-        anchor="sw",
+        anchor="c",
     )
 
     pdf.save()

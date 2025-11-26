@@ -1,8 +1,7 @@
 import pandas as pd
 import numpy as np
 from pvlib.location import Location
-import pvlib
-from pvlib import irradiance, atmosphere
+from pvlib import irradiance
 from fpdf import FPDF
 import matplotlib.pyplot as plt
 from io import BytesIO
@@ -10,16 +9,16 @@ from io import BytesIO
 
 def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
     """
-    Основна функція:
-    - розрахунок сонячного положення
-    - розрахунок GHI
-    - розрахунок генерації за user tilt
-    - визначення monthly optimal tilts
-    - визначення annual optimal tilt (НОВЕ)
+    Базова модель генерації:
+    - clearsky GHI через Ineichen
+    - AOI-модель
+    - генерація за user_tilt
+    - monthly optimal tilt
+    - annual optimal tilt (максимальна річна генерація)
     """
 
     # ------------------------------------------------------------
-    # 1. Генеруємо погодинну часову шкалу
+    # 1. Створюємо часову шкалу (UTC)
     # ------------------------------------------------------------
     times = pd.date_range(
         '2025-01-01', '2025-12-31 23:00',
@@ -27,22 +26,27 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
         tz='UTC'
     )
 
-    location = Location(latitude=latitude, longitude=longitude, tz='UTC')
+    # Локація
+    location = Location(latitude=latitude, longitude=longitude, tz="UTC")
 
     # Положення сонця
     solar_position = location.get_solarposition(times)
 
     # ------------------------------------------------------------
-    # 2. GHI через модель Дарі
+    # 2. Clear-sky GHI через Ineichen (робоча й точна модель)
     # ------------------------------------------------------------
-    ghi = irradiance.haurwitz(solar_position["apparent_zenith"])
+    clearsky = location.get_clearsky(times, model="ineichen")
+    ghi = clearsky["ghi"].copy()
     ghi[ghi < 0] = 0
 
+    # GHI у кВт/м²
+    ghi_kw = ghi / 1000.0
+
     # ------------------------------------------------------------
-    # 3. Розрахунок помісячних оптимальних кутів
+    # 3. MONTHLY optimal tilt
     # ------------------------------------------------------------
     tilts = list(range(0, 91))
-    monthly_aoi_dict = {}
+    monthly_cos_dict = {}
 
     for tilt in tilts:
         aoi = irradiance.aoi(
@@ -51,24 +55,23 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
             solar_zenith=solar_position["apparent_zenith"],
             solar_azimuth=solar_position["azimuth"]
         )
+
         cos_aoi = np.cos(np.radians(aoi))
         cos_aoi[cos_aoi < 0] = 0
 
-        monthly_aoi_dict[f"tilt_{tilt}"] = cos_aoi
+        monthly_cos_dict[f"tilt_{tilt}"] = cos_aoi
 
-    df_aoi = pd.DataFrame(monthly_aoi_dict, index=times)
+    df_cos = pd.DataFrame(monthly_cos_dict, index=times)
+    monthly_avg = df_cos.resample("ME").mean()
 
-    monthly_avg = df_aoi.resample("ME").mean()
     monthly_best = monthly_avg.idxmax(axis=1).str.extract(r"(\d+)").astype(int)
     monthly_best.columns = ["Best Tilt"]
     monthly_best["Month"] = monthly_best.index.strftime("%B")
 
     # ------------------------------------------------------------
-    # 4. Розрахунок річного оптимального кута (НОВА ЛОГІКА)
+    # 4. Annual optimal tilt (правильна логіка)
     # ------------------------------------------------------------
-
-    system_losses = 0.20  # базові втрати
-    ghi_kw = ghi / 1000.0  # перевід W/m2 → kW/m2
+    system_losses = 0.20
 
     best_annual_tilt = None
     best_annual_energy = -1
@@ -84,10 +87,10 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
         cos_aoi = np.cos(np.radians(aoi))
         cos_aoi[cos_aoi < 0] = 0
 
-        poa_effective = ghi_kw * cos_aoi
-        poa_effective = poa_effective * (1 - system_losses)
+        poa = ghi_kw * cos_aoi
+        poa = poa * (1 - system_losses)
 
-        hourly_energy = poa_effective * system_power_kw
+        hourly_energy = poa * system_power_kw
         annual_energy = hourly_energy.sum()
 
         if annual_energy > best_annual_energy:
@@ -113,6 +116,7 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
     poa_user = poa_user * (1 - system_losses)
 
     hourly_energy_user = poa_user * system_power_kw
+
     monthly_energy = hourly_energy_user.resample("ME").sum()
     annual_energy_user = hourly_energy_user.sum()
 
@@ -122,7 +126,7 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
     })
 
     # ------------------------------------------------------------
-    # 6. Графік генерації
+    # 6. Графік
     # ------------------------------------------------------------
     fig, ax = plt.subplots(figsize=(10, 5))
     ax.plot(monthly_df["Month"], monthly_df["Energy (kWh)"], marker="o")
@@ -153,7 +157,7 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
     pdf_buffer.seek(0)
 
     # ------------------------------------------------------------
-    # 8. Повертаємо все
+    # 8. Повернення результату
     # ------------------------------------------------------------
     return {
         "monthly_df": monthly_df,

@@ -113,7 +113,8 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
 
     monthly_df = pd.DataFrame({
         "Month": monthly_energy.index.strftime("%B"),
-        "Energy (kWh)": monthly_energy.values
+        # ЗМІНА: Округлення місячної енергії до 0 знаків
+        "Energy (kWh)": monthly_energy.values.round(0)
     })
 
     # ------------------------------------------------------------

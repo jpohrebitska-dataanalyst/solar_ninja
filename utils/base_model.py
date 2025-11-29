@@ -18,6 +18,8 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
     """
     Solar Ninja — Basic Model (Fixed PDF Formatting)
     """
+    # ВИЗНАЧЕННЯ: Втрати системи (використовується в секціях 4, 5, 6)
+    system_losses = 0.20
 
     # ------------------------------------------------------------
     # 1. Time index
@@ -43,10 +45,10 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
     ghi_kw = ghi / 1000.0
 
     # ------------------------------------------------------------
-    # 4. Monthly optimal tilt
+    # 4. Monthly optimal tilt (ОБНОВЛЕНО: Максимізує kWh за місяць)
     # ------------------------------------------------------------
     tilts = list(range(0, 91))
-    monthly_cos = {}
+    hourly_energy_df = {}
 
     for t in tilts:
         aoi = irradiance.aoi(
@@ -57,12 +59,21 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
         )
         cos_aoi = np.cos(np.radians(aoi))
         cos_aoi[cos_aoi < 0] = 0
-        monthly_cos[f"tilt_{t}"] = cos_aoi
 
-    df_cos = pd.DataFrame(monthly_cos, index=times)
-    monthly_avg = df_cos.resample("M").mean()
+        # Розраховуємо POA (Plane of Array Irradiance)
+        poa = ghi_kw * cos_aoi * (1 - system_losses)
+        # Розраховуємо щогодинну енергію
+        hourly_energy = poa * system_power_kw
+        
+        hourly_energy_df[f"tilt_{t}"] = hourly_energy
 
-    monthly_best = monthly_avg.idxmax(axis=1).str.extract(r"(\d+)").astype(int)
+    df_energy = pd.DataFrame(hourly_energy_df, index=times)
+    
+    # Знаходимо сумарну енергію для кожного кута нахилу за кожен місяць
+    monthly_sum = df_energy.resample("M").sum()
+
+    # Визначаємо кут, який дав максимальну суму kWh для кожного місяця
+    monthly_best = monthly_sum.idxmax(axis=1).str.extract(r"(\d+)").astype(int)
     monthly_best.columns = ["Best Tilt (deg)"]
     monthly_best["Month"] = monthly_best.index.strftime("%B")
 
@@ -76,11 +87,17 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
     # Енергія: Розраховується сумарна річна енергія (annual_energy) для цього кута з урахуванням втрат (20%).
     # Вибір: Кут, який дав найбільшу сумарну річну енергію, оголошується річним оптимальним кутом.
 
-    system_losses = 0.20
     best_tilt = None
     best_energy = -1.0
 
+    # Використовуємо вже розрахований df_energy з секції 4
+    # Якщо він не існує, розраховуємо його знову. Тут він існує.
+    # Ми беремо суму енергії за весь рік (або суму з df_energy)
+    
+    # Якщо ми перебираємо всі кути знову, то використовуємо існуючий цикл:
     for t in tilts:
+        # Отримуємо стовпець річної енергії для поточного нахилу 't'
+        # Або розраховуємо знову (щоб не покладатись на секцію 4):
         aoi = irradiance.aoi(
             surface_tilt=t,
             surface_azimuth=180,
@@ -177,6 +194,7 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
         ["System Power", f"{system_power_kw:.2f} kW"],
         ["User Tilt", f"{user_tilt:.1f}°"],
         ["Optimal Annual Tilt", f"{annual_optimal_tilt}°"],
+        # Річна енергія вже округлена до 0 у форматі
         ["Total Annual Energy", f"{annual_energy:,.0f} kWh"]
     ]
 
@@ -212,8 +230,9 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
     # Заголовки
     table_data = [["Month", "Energy (kWh)"]]
     # Рядки
+    # Зверніть увагу, що monthly_df["Energy (kWh)"] вже округлено до 0
     for idx, row in monthly_df.iterrows():
-        table_data.append([row['Month'], f"{row['Energy (kWh)']:.2f}"])
+        table_data.append([row['Month'], f"{int(row['Energy (kWh)'])}"]) # Перетворюємо на ціле число для чистого вигляду в PDF
 
     main_table = Table(table_data, colWidths=[150, 150])
     main_table.setStyle(TableStyle([

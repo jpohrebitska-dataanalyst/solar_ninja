@@ -7,15 +7,16 @@ from io import BytesIO
 import tempfile
 import os
 
-# ReportLab PDF
-from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import letter, landscape
-from reportlab.lib.utils import ImageReader
-
+# --- Оновлені імпорти для красивого PDF ---
+from reportlab.lib.pagesizes import A4
+from reportlab.lib import colors
+from reportlab.lib.units import inch
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as PDFImage
 
 def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
     """
-    Solar Ninja — Basic Model
+    Solar Ninja — Basic Model (Fixed PDF Formatting)
     """
 
     # ------------------------------------------------------------
@@ -54,10 +55,8 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
             solar_zenith=solar_position["apparent_zenith"],
             solar_azimuth=solar_position["azimuth"]
         )
-
         cos_aoi = np.cos(np.radians(aoi))
         cos_aoi[cos_aoi < 0] = 0
-
         monthly_cos[f"tilt_{t}"] = cos_aoi
 
     df_cos = pd.DataFrame(monthly_cos, index=times)
@@ -81,7 +80,6 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
             solar_zenith=solar_position["apparent_zenith"],
             solar_azimuth=solar_position["azimuth"]
         )
-
         cos_aoi = np.cos(np.radians(aoi))
         cos_aoi[cos_aoi < 0] = 0
 
@@ -119,9 +117,9 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
     })
 
     # ------------------------------------------------------------
-    # 7. PNG: Monthly Chart (fixed size)
+    # 7. Generate Charts (Matplotlib)
     # ------------------------------------------------------------
-    fig, ax = plt.subplots(figsize=(8, 4), dpi=150)
+    fig, ax = plt.subplots(figsize=(7, 4), dpi=150)
     ax.bar(monthly_df["Month"], monthly_df["Energy (kWh)"], color="orange")
     ax.set_title(f"Monthly Energy Output (Tilt = {user_tilt:.1f}°)")
     ax.set_xlabel("Month")
@@ -129,131 +127,103 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
     plt.xticks(rotation=45)
     plt.tight_layout()
 
-    tmp_plot = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
-    fig.savefig(tmp_plot.name, dpi=150)
-    tmp_plot.close()
+    # Зберігаємо графік у буфер пам'яті (без створення тимчасових файлів на диску)
+    img_buffer = BytesIO()
+    fig.savefig(img_buffer, format='png', dpi=150)
+    img_buffer.seek(0)
 
     # ------------------------------------------------------------
-    # 8. PNG: Table (fixed size)
+    # 8. Generate Professional PDF using PLATYPUS
     # ------------------------------------------------------------
-    table_fig, table_ax = plt.subplots(figsize=(6, 3), dpi=150)
-    table_ax.axis("off")
-
-    table = table_ax.table(
-        cellText=monthly_df["Energy (kWh)"].round(2).values.reshape(-1, 1),
-        rowLabels=monthly_df["Month"].values,
-        colLabels=["Energy (kWh)"],
-        loc="center",
-        cellLoc="center"
+    pdf_buffer = BytesIO()
+    
+    # Створюємо документ (A4, поля по 1 дюйму)
+    doc = SimpleDocTemplate(
+        pdf_buffer, 
+        pagesize=A4,
+        rightMargin=50, leftMargin=50, 
+        topMargin=50, bottomMargin=50
     )
-    table.auto_set_font_size(False)
-    table.set_fontsize(9)
-    table.scale(1.3, 1.3)
+    
+    styles = getSampleStyleSheet()
+    # Кастомний стиль для заголовку
+    title_style = ParagraphStyle(
+        'CustomTitle', 
+        parent=styles['Heading1'], 
+        alignment=1, # Center
+        spaceAfter=20,
+        fontSize=18
+    )
+    normal_style = styles['Normal']
 
-    tmp_table = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
-    table_fig.savefig(tmp_table.name, dpi=150)
-    tmp_table.close()
+    story = []
 
-    # ------------------------------------------------------------
-    # 9. PDF (ideal alignment)
-    # ------------------------------------------------------------
-    buffer = BytesIO()
-    pdf = canvas.Canvas(buffer, pagesize=landscape(letter))
-    width, height = landscape(letter)
+    # 1. Заголовок
+    story.append(Paragraph("Solar Ninja — Energy Generation Report", title_style))
+    story.append(Spacer(1, 12))
 
-    # Layout helpers
-    margin = 36
-    content_width = width - 2 * margin
-    y = height - margin
-
-    # Header
-    pdf.setFont("Helvetica-Bold", 18)
-    pdf.drawString(margin, y, "Solar Ninja — Basic Model Report")
-
-    # Summary block
-    pdf.setFont("Helvetica", 11)
-    y -= 24
-    summary_lines = [
-        f"Location: lat={latitude:.4f}, lon={longitude:.4f}",
-        f"System power: {system_power_kw:.2f} kW",
-        f"User tilt: {user_tilt:.1f}°",
-        f"Annual optimal tilt: {annual_optimal_tilt}°",
-        f"Annual energy: {annual_energy:.0f} kWh",
+    # 2. Блок з підсумками (Summary)
+    summary_data = [
+        ["Parameter", "Value"],
+        ["Location (Lat, Lon)", f"{latitude:.4f}, {longitude:.4f}"],
+        ["System Power", f"{system_power_kw:.2f} kW"],
+        ["User Tilt", f"{user_tilt:.1f}°"],
+        ["Optimal Annual Tilt", f"{annual_optimal_tilt}°"],
+        ["Total Annual Energy", f"{annual_energy:,.0f} kWh"]
     ]
 
-    for line in summary_lines:
-        pdf.drawString(margin, y, line)
-        y -= 16
+    # Створюємо таблицю підсумків
+    summary_table = Table(summary_data, colWidths=[200, 200])
+    summary_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (1, 0), colors.grey),
+        ('TEXTCOLOR', (0, 0), (1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+        ('FONTNAME', (0, 0), (0, 0), 'Helvetica-Bold'),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+        ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+        ('GRID', (0, 0), (-1, -1), 1, colors.black),
+    ]))
+    
+    story.append(summary_table)
+    story.append(Spacer(1, 24))
 
-    # Titles for main content
-    y -= 6
-    pdf.setFont("Helvetica-Bold", 13)
-    pdf.drawString(margin, y, "Monthly Energy Table")
-    pdf.drawString(margin + content_width / 2, y, "Monthly Energy Chart")
-    y -= 14
+    # 3. Графік (Chart)
+    # Конвертуємо Matplotlib зображення для ReportLab
+    # width=450 пікселів (приблизно на всю ширину сторінки А4 за мінусом полів)
+    rl_image = PDFImage(img_buffer, width=450, height=250) 
+    story.append(Paragraph("Monthly Energy Production Chart:", styles['Heading2']))
+    story.append(Spacer(1, 10))
+    story.append(rl_image)
+    story.append(Spacer(1, 24))
 
-    # Load PNG and fit to page
-    table_img = ImageReader(tmp_table.name)
-    table_w, table_h = table_img.getSize()
+    # 4. Основна таблиця даних (Monthly Table)
+    story.append(Paragraph("Monthly Breakdown:", styles['Heading2']))
+    story.append(Spacer(1, 10))
 
-    margin = 50
-    content_width = width - 2 * margin
-    available_height = y - margin
+    # Готуємо дані для таблиці з DataFrame
+    # Заголовки
+    table_data = [["Month", "Energy (kWh)"]]
+    # Рядки
+    for idx, row in monthly_df.iterrows():
+        table_data.append([row['Month'], f"{row['Energy (kWh)']:.2f}"])
 
-    scale_factor = min(content_width / table_w, available_height / table_h, 1.0)
-    new_w = table_w * scale_factor
-    new_h = table_h * scale_factor
+    main_table = Table(table_data, colWidths=[150, 150])
+    main_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.darkblue),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 10),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.whitesmoke, colors.white]),
+    ]))
 
-    x_pos = margin + (content_width - new_w) / 2
-    y_pos = y - new_h
+    story.append(main_table)
 
-    pdf.drawImage(
-        table_img,
-        x_pos,
-        y_pos,
-        width=new_w,
-        height=new_h,
-        preserveAspectRatio=True,
-        anchor="c",
-    )
-
-    y = y_pos - 30
-
-    # ------------------------------------------------------------
-    # NEW PAGE + CHART (centered and aligned)
-    # ------------------------------------------------------------
-    pdf.showPage()
-    pdf.setFont("Helvetica-Bold", 13)
-    pdf.drawString(50, height - 50, "Monthly Energy Chart:")
-
-    chart_img = ImageReader(tmp_plot.name)
-    chart_w, chart_h = chart_img.getSize()
-
-    chart_available_height = height - 2 * margin
-    scale_chart = min((content_width) / chart_w, chart_available_height / chart_h, 1.0)
-
-    new_cw = chart_w * scale_chart
-    new_ch = chart_h * scale_chart
-
-    x_chart = margin + (content_width - new_cw) / 2
-    y_chart = margin + (chart_available_height - new_ch)
-
-    pdf.drawImage(
-        chart_img,
-        x_chart,
-        y_chart,
-        width=new_cw,
-        height=new_ch,
-        preserveAspectRatio=True,
-        anchor="c",
-    )
-
-    pdf.save()
-    buffer.seek(0)
-
-    # Clean temp files
-    os.unlink(tmp_plot.name)
-    os.unlink(tmp_table.name)
+    # Генеруємо PDF
+    doc.build(story)
+    pdf_buffer.seek(0)
 
     # ------------------------------------------------------------
     # Return
@@ -264,5 +234,5 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
         "annual_energy": annual_energy,
         "annual_optimal_tilt": annual_optimal_tilt,
         "fig": fig,
-        "pdf": buffer
+        "pdf": pdf_buffer
     }

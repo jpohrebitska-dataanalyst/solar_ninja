@@ -1,7 +1,6 @@
 import streamlit as st
 from utils.base_model import calculate_solar_output
 
-
 st.set_page_config(
     page_title="Solar Ninja — Basic Model",
     page_icon="⚔️",
@@ -26,6 +25,7 @@ with st.form("input_form"):
 
 if submitted:
     with st.spinner("Running Solar Ninja calculations..."):
+        # Виклик нової функції, яка повертає словник з даними та буферами файлів
         result = calculate_solar_output(
             latitude=latitude,
             longitude=longitude,
@@ -35,16 +35,20 @@ if submitted:
 
     st.success("Calculation completed.")
 
+    # Розпаковка результатів
     monthly_df = result["monthly_df"]
     monthly_best = result["monthly_best"]
     annual_energy = result["annual_energy"]
     annual_optimal_tilt = result["annual_optimal_tilt"]
+    
+    # PDF тепер приходить як BytesIO об'єкт, готовий до завантаження
     pdf_buffer = result["pdf"]
 
     # ---------------------------
-    # Streamlit графік (нова секція)
+    # Streamlit графік
     # ---------------------------
     st.subheader("Monthly Energy Chart")
+    # Відображаємо фігуру Matplotlib, яку повернула функція
     st.pyplot(result["fig"])
 
     # Annual summary
@@ -55,18 +59,19 @@ if submitted:
 
     # Monthly tables
     st.subheader("Monthly energy (user tilt)")
-    st.dataframe(monthly_df)
+    st.dataframe(monthly_df, use_container_width=True)
 
-    st.subheader("Monthly optimal tilts (analytics)")
-    st.dataframe(monthly_best)
+    with st.expander("Show detailed optimal tilts (Analytics)"):
+        st.dataframe(monthly_best, use_container_width=True)
 
     # PDF download
     st.subheader("Download report")
     st.download_button(
-        label="Download PDF",
+        label="Download PDF Report",
         data=pdf_buffer,
         file_name="solar_ninja_basic_report.pdf",
-        mime="application/pdf"
+        mime="application/pdf",
+        type="primary"
     )
 
 st.markdown("---")

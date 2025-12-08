@@ -19,7 +19,7 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
     Solar Ninja — Basic Model (Fixed PDF Formatting)
     """
     # ВИЗНАЧЕННЯ: Втрати системи (використовується в секціях 4, 5, 6)
-    system_losses = 0.20
+    system_losses = 0.18
 
     # ------------------------------------------------------------
     # 1. Time index

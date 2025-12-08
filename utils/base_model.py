@@ -45,7 +45,7 @@ def calculate_solar_output(latitude, longitude, system_power_kw, user_tilt):
     ghi_kw = ghi / 1000.0
 
     # ------------------------------------------------------------
-    # 4. Monthly optimal tilt (ОБНОВЛЕНО: Максимізує kWh за місяць)
+    # 4. Monthly optimal tilt (ОНОВЛЕНО: Максимізує kWh за місяць)
     # ------------------------------------------------------------
     tilts = list(range(0, 91))
     hourly_energy_df = {}
